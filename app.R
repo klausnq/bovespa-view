@@ -5,19 +5,16 @@ library(ggplot2)
 library(dygraphs)
 library(zoo)
 library(xts)
-#  passa o caminho do spark
+#  passa o caminho do spark para o R
 Sys.setenv(SPARK_HOME = "/home/klaus/software/spark")
 #  carrega biblioteca do spark
 library(SparkR, lib.loc = c(file.path(Sys.getenv("SPARK_HOME"), "R", "lib")))
 #inicia sessao do sparkR
 sc <- sparkR.session(master = "local[*]", sparkConfig = list(spark.driver.memory = "2g"))
-sc
 ########  Abre arquivo de dados ######## 
-texto <- read.text("/home/klaus/Dropbox/Coppe/topicos_BD/Series_Bovespa/Anual/txt/")
-texto
+texto <- read.text("Serie_historica/")
 #### remove cabeçalhos e rodapés dos arquivos ####
 txt_dados <- filter(texto, substr(texto$value,1,2) == "01")
-txt_dados
 ########  distribui texto em colunas aplicando o esquema de dados e pegando somente as colunas que intreressam ######## 
 sdf_sel <- select(txt_dados, 
                   alias(cast(substr(txt_dados$value,4,11),"integer"), "DATA"), alias(substr(txt_dados$value,12,13), "CODBDI"), alias(substr(txt_dados$value,14,25), "CODNEG"), 
@@ -29,28 +26,17 @@ sdf_sel <- select(txt_dados,
                   alias(cast(substr(txt_dados$value,212,218),"integer"),"FATCOT"), alias(substr(txt_dados$value,232,243),"CODISI"), 
                   alias(substr(txt_dados$value,244,246),"DISMES")
 )
-sdf_sel
 ########  seleciona apenas açoes comercializadas em lote padrao e no mercado a vista (CODBDI = 02 E TPMERC = 010) ######## 
 sdf_dados <- filter(sdf_sel, sdf_sel$CODBDI == "02" & sdf_sel$TPMERC == "010")
-sdf_dados
 ######## gera lista com os nomes daas açoes em ordem alfabetica ########
 nomes <- dropDuplicates(  select(sdf_dados, sdf_dados$CODNEG, alias( format_string("%s: %s - %s",trim(sdf_dados$CODNEG),trim(sdf_dados$NOMRES),trim(sdf_dados$ESPECI) ), "nome") ), "CODNEG")
 createOrReplaceTempView(nomes, "table")
 acoes <- sql("SELECT * FROM table ORDER BY CODNEG")
-acoes
 
 #cria lista de ações
 choices <- as.data.frame(acoes)
 your_choices <- as.list(choices$nome)
 names(your_choices) <- choices$nome
-
-#cria lista de dias, meses e anos
-dia <- list("01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17","18","19","10","21","22","23","24","25","26","27","28","29","30","31")
-mes <- list("01","02","03","04", "05","06","07","08","09","10","11","12")
-ano <- list("2010", "2011", "2012", "2013", "2014", "2015", "2016")
-
-#### FUNÇOES PUBLICAS ####                                COLOCAR O NUMERO DE CORES QUE DESEJA-SE USAR (MAXIMO)
-
 
 #### SERVER ####
 server <- function(input, output){
@@ -72,7 +58,7 @@ server <- function(input, output){
     input$go
     isolate({ filter(sdf_dados, ((sdf_dados$CODNEG) == (acao()) ) & sdf_dados$DATA >= data_ini() & sdf_dados$DATA <= data_fin()  ) })
     })
-  #ordena dados_pet pela data
+  #ordena dados_acao pela data
   dados_acao_sql <- reactive({
     if(input$go == 0) return()
     input$go
@@ -83,14 +69,14 @@ server <- function(input, output){
   })
   
   #texto descritivo da busca
-  txt_desc <- reactive({ paste("Cotaçoes da açao ", acao(), "no periodo entre ", substr(input$data_inicial,9,10),"/", substr(input$data_inicial,6,7), "/", substr(input$data_inicial,1,4),
+  txt_desc <- reactive({ paste("Cotações da ação ", acao(), "no período entre ", substr(input$data_inicial,9,10),"/", substr(input$data_inicial,6,7), "/", substr(input$data_inicial,1,4),
                                " e ", substr(input$data_final,9,10),"/", substr(input$data_final,6,7), "/", substr(input$data_final,1,4) ) })
-  #cotaçao inicial (double e texto)                                     FORMATAR CASAS DECIMAIS!
+  #cotaçao inicial (double e texto)
   cota_ini <- reactive({  first( dados_acao_sql() )$PREULT })
   data_prim <-reactive({  
     data <- first( dados_acao_sql() )$DATA 
     paste( substr(data,7,8),"/", substr(data,5,6), "/", substr(data,1,4) )})
-  txt_ini <- reactive({ paste( "Cotação inicial (R$): ", cota_ini(), " em ", data_prim() )  })
+  txt_ini <- reactive({ paste( "\nCotação inicial (R$): ", cota_ini(), " em ", data_prim() )  })
   #cotaçao minima
   cota_min <- reactive({ collect( select( dados_acao_sql(), min(dados_acao_sql()$PREULT) ) )  })
   data_min <- reactive({
@@ -156,16 +142,12 @@ server <- function(input, output){
     input$go
     isolate({ txt_max() })
   })
-  #cotaçao final
-  #output$final <- renderText(txt_fin() )
   #rendimento acumulado
   output$rendimento <- renderText({ 
     if(input$go == 0) return()
     input$go
     isolate({ txt_rend() })
   })
-  
-  
   
   
   ## 2 - MAIS RENTÁVEIS NO PERÍODO
@@ -177,6 +159,7 @@ server <- function(input, output){
   data_fin_2 <- reactive({ as.integer( substr(input$data_final_2,9,10)) + as.integer( substr(input$data_final_2,6,7))*100 + as.integer( substr(input$data_final_2,1,4))*10000 })
   
   #COMPUTA SAIDAS
+  #texto de saída
   output$texto_rent <- renderText({ 
     if(input$go_2 == 0)
       return()
@@ -184,8 +167,8 @@ server <- function(input, output){
     isolate({ paste("Ações mais rentáveis no periodo entre ", substr(input$data_inicial_2,9,10),"/", substr(input$data_inicial_2,6,7), "/", substr(input$data_inicial_2,1,4),
                     " e ", substr(input$data_final_2,9,10),"/", substr(input$data_final_2,6,7), "/", substr(input$data_final_2,1,4) ) })
   })
-    #txt_rent() })
-  
+
+  #tabela exibindo as ações mais rentáveis no período
   output$rentaveis <- renderTable({
     if(input$go_2 == 0)
       return()
@@ -199,26 +182,14 @@ server <- function(input, output){
       take(dados_periodo_sql,input$num)
     })
   })
-  
-  
-  
-  #txt_rent <- reactive({  })
-  
-  
-  #mais rentaveis no periodo
- 
-  #output$rentaveis <- renderTable( head( dados_periodo_sql() ) )
-
 }
 
 
 #### UI ####
 ui <- navbarPage("Bovespa - Dados historicos",
-  tabPanel("Açao por periodo",
-  #titulo
-  #headerPanel(),
-  
-  #barra de selecao
+  #aba de ações por período
+  tabPanel("Ação por periodo",
+  #barra de selecao lateral
   sidebarPanel(
     selectInput("acao", "Selecionar ação:",your_choices,NULL),
     #seleciona datas inicial e final
@@ -232,6 +203,7 @@ ui <- navbarPage("Bovespa - Dados historicos",
     h3(textOutput("texto_graf")),
     #plotOutput("plot"),
     dygraphOutput("plot"),
+    HTML("<br>"),
     textOutput("inicial"),
     textOutput("minimo"),
     textOutput("maximo"),
@@ -240,7 +212,7 @@ ui <- navbarPage("Bovespa - Dados historicos",
     h4(textOutput("rendimento"))
     
   )),
-
+  #aba de ações mais rentáveis
   tabPanel("Mais rentáveis por periodo",
            sidebarPanel(
              dateInput("data_inicial_2", "Data inicial (dd/mm/aaaa)", value = "01/01/2010", format = "dd/mm/yyyy"),
@@ -253,8 +225,6 @@ ui <- navbarPage("Bovespa - Dados historicos",
              tableOutput("rentaveis")
            )
          )
-  #img(src='bovespa.png', align = "center")
 )
-
 
 shinyApp(ui = ui, server = server)
